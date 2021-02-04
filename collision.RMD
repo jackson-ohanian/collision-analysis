@@ -1,0 +1,58 @@
+---
+title: "Collision"
+author: "Jackson Ohanian"
+date: "2/3/2021"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+require("dplyr")
+require("Ecdat")
+require("boot")
+require("caret")
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+This project aims to explore the best metric of state fatal accident data as a means for predicting profitability of car insurance practices. 
+
+Profitability is defined as the dollar($USD) amount difference between the losses incurred as a result of collisions (and only collisions) and the average premium paid. This does not consider tax rates, regulatory fees, other streams of income besides premiums, or other causes of loss aside from collision (theft, company overhead, etc.). 
+
+The profitibality is therefore the variable profit of insuring an additional car per state. An overview of the data (source: 538 - https://github.com/fivethirtyeight/data/tree/master/bad-drivers) is below. 
+
+```{r}
+data <- read.csv("538-data.csv")
+colnames(data) <- c("state", "fatal.pbm", "was.speeding", "was.dui", "wasnt.distract", "no.prev", "premiums", "ins.losses")
+head(data)
+```
+
+Consider the new column, the average profit (as defined) in premiums per customer - and given summary statistics. 
+
+```{r}
+data <- data %>% mutate(profit = premiums - ins.losses)
+mean(data$profit)
+sd(data$profit)
+```
+
+Considering all relevant columns as an effect on lower profit - using Leave-one-out Cross-Validation (LOOCV) as a method for finding the best polynomial available.
+
+```{r}
+### build initial model
+data.glm <- glm(profit ~ fatal.pbm + was.speeding + was.dui + wasnt.distract + no.prev, data = data)
+data.glm
+
+### MSE
+cv.mse <- cv.glm(data, data.glm)
+cv.mse
+
+### LOOCV
+## init empty
+cv.mse = rep(-1,4) 
+for (i in 1:4) 
+{ 
+  data.loocv <- glm(profit ~ fatal.pbm + was.speeding + was.dui + wasnt.distract + no.prev, data = data)
+  cv.mse[i] = cv.glm(data, data.loocv)$delta[1] 
+} 
+  
+cv.mse
+```
+
