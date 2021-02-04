@@ -9,19 +9,24 @@ output: html_document
 require("dplyr")
 require("Ecdat")
 require("boot")
+require("ggplot2")
 require("caret")
 knitr::opts_chunk$set(echo = TRUE)
 ```
+
+# Regression
 
 This project aims to explore the best metric of state fatal accident data as a means for predicting profitability of car insurance practices. 
 
 Profitability is defined as the dollar($USD) amount difference between the losses incurred as a result of collisions (and only collisions) and the average premium paid. This does not consider tax rates, regulatory fees, other streams of income besides premiums, or other causes of loss aside from collision (theft, company overhead, etc.). 
 
-The profitibality is therefore the variable profit of insuring an additional car per state. An overview of the data (source: 538 - https://github.com/fivethirtyeight/data/tree/master/bad-drivers) is below. 
+The profitability is therefore the variable profit of insuring an additional car per state. An overview of the data (source: FiveThirtyEight - https://github.com/fivethirtyeight/data/tree/master/bad-drivers) is below. 
 
 ```{r}
 data <- read.csv("538-data.csv")
 colnames(data) <- c("state", "fatal.pbm", "was.speeding", "was.dui", "wasnt.distract", "no.prev", "premiums", "ins.losses")
+## add state abbreviations using Rs State dataset
+data$abbv <- append(append(state.abb[1:8], ("DC")), state.abb[9:50])
 head(data)
 ```
 
@@ -29,30 +34,96 @@ Consider the new column, the average profit (as defined) in premiums per custome
 
 ```{r}
 data <- data %>% mutate(profit = premiums - ins.losses)
+data <- data %>% mutate(rel.profit = premiums/ins.losses)
+print(data$rel.profit)
 mean(data$profit)
 sd(data$profit)
 ```
 
-Considering all relevant columns as an effect on lower profit - using Leave-one-out Cross-Validation (LOOCV) as a method for finding the best polynomial available.
+Visualization of the profit margin and relative amount between premium and payout per driver - 
+
+```{r}
+
+barplot(data$profit, names.arg=data$abbv, las=2, main = 'Profit (Premium - Cost) ($)')
+barplot(data$rel.profit, names.arg=text(data$abbv, cex=0.5), las=2, main = 'Relative Gain (Premium / Cost) ($)', cex.arg=0.1)
+
+```
+
+Considering all relevant columns as an effect on lower profit - using AIC step to find the best predictors to model with - and using Leave-one-out Cross-Validation (LOOCV) as a method for finding the best polynomial available for said predictors.
 
 ```{r}
 ### build initial model
 data.glm <- glm(profit ~ fatal.pbm + was.speeding + was.dui + wasnt.distract + no.prev, data = data)
-data.glm
+final.bw.step <- step(data.glm, direction = "backward")
+final.fw.step <- step(data.glm, direction = "forward")
+final.both.step <- step(data.glm, direction = "both")
+
+final.bw.step
+final.fw.step
+final.both.step
 
 ### MSE
-cv.mse <- cv.glm(data, data.glm)
-cv.mse
+cv.mse.bw <- cv.glm(data, final.bw.step)
+cv.mse.fw <- cv.glm(data, final.fw.step)
+cv.mse.both <- cv.glm(data, final.both.step)
 
 ### LOOCV
-## init empty
-cv.mse = rep(-1,4) 
-for (i in 1:4) 
+## for each of the found models - consider polynomial modifications to each of the AIC step models
+## Backward and both are only fatalities per billion miles
+## forward is all predictors
+cv.mse.bw = rep(-1,5) 
+cv.mse.fw = rep(-1,5) 
+
+for (i in 1:5) 
 { 
-  data.loocv <- glm(profit ~ fatal.pbm + was.speeding + was.dui + wasnt.distract + no.prev, data = data)
-  cv.mse[i] = cv.glm(data, data.loocv)$delta[1] 
+  data.loocv.bw <- glm(profit ~ poly(fatal.pbm, i), data = data)
+  data.loocv.fw <- glm(profit ~ poly(fatal.pbm, i) +  was.speeding + poly(was.dui, i) + wasnt.distract + no.prev, data = data)
+
+  cv.mse.bw[i] = cv.glm(data, data.loocv.bw)$delta[1] 
+  cv.mse.fw[i] = cv.glm(data, data.loocv.fw)$delta[1] 
 } 
   
-cv.mse
+cv.mse.bw
+### select polynomial - 3
+bw.poly <- 3
+cv.mse.fw
+### select polynomial - 2
+fw.poly <- 2
+
+### New Models
+model.bw <- lm(profit ~ poly(fatal.pbm, bw.poly), data = data)
+model.fw <- lm(profit ~ poly(fatal.pbm, fw.poly) +  was.speeding + poly(was.dui, fw.poly) + wasnt.distract + no.prev, data = data)
+
+summary(model.bw)
+summary(model.fw)
 ```
+
+Comparing these two models further - and looking at evidence of their validity - 
+
+```{r}
+### models are saturated, need more data for a direct comparison
+summary(model.bw)$r.squared
+summary(model.fw)$r.squared
+
+### higher R-squared in backwards AIC step model
+
+### K-fold cross validation of both models
+train.control <- trainControl(method = "repeatedcv", 
+                              number = 2, repeats = 3)
+# Train the model
+#kfold.bw <- train(profit ~ poly(fatal.pbm, bw.poly), data = data, method = "lm", trControl = train.control)
+
+#kfold.fw <- train(profit ~ poly(fatal.pbm, fw.poly) +  was.speeding + poly(was.dui, fw.poly) + wasnt.distract + no.prev, data = data, method = "lm", trControl = train.control)
+
+kfold.bw
+
+plot(profit~fatal.pbm, data=data, main = "Backwards Step Model", xlab = "States Fatality PBM", ylab = "Profit ($)", col = "light blue", fg = "light blue", bg = "light blue", lty = 4, col.lab = "light blue", pch = 18); lines(x=seq(min(data$fatal.pbm), max(data$fatal.pbm), by=1), predict(model.bw, newdata = data.frame(fatal.pbm=seq(min(data$fatal.pbm), max(data$fatal.pbm), 1))), lty = 4)
+
+```
+
+
+
+
+
+
 
